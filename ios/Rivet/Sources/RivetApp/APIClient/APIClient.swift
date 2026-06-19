@@ -1,10 +1,10 @@
 import CryptoKit
 import Foundation
 
-public struct APIConfiguration {
-    public var baseURL: URL
-    public var activeSPKIPin: String?
-    public var backupSPKIPin: String?
+public struct APIConfiguration: Sendable {
+    public let baseURL: URL
+    public let activeSPKIPin: String?
+    public let backupSPKIPin: String?
 
     public static let release = APIConfiguration(
         baseURL: URL(string: "https://rivetapp.duckdns.org")!,
@@ -13,7 +13,7 @@ public struct APIConfiguration {
     )
 }
 
-public struct PairClaimResponse: Decodable {
+public struct PairClaimResponse: Decodable, Sendable {
     public let deviceID: String
     public let deviceToken: String
     public let initialCursor: Int
@@ -27,7 +27,7 @@ public struct PairClaimResponse: Decodable {
     }
 }
 
-public struct RemoteSettings: Decodable {
+public struct RemoteSettings: Decodable, Sendable {
     public let version: Int
     public let morningTimeLocal: String
     public let eveningTimeLocal: String
@@ -53,7 +53,7 @@ public struct RemoteSettings: Decodable {
     }
 }
 
-public struct SyncResponse: Decodable {
+public struct SyncResponse: Decodable, Sendable {
     public let cursor: Int
     public let events: [SyncEvent]
     public let settings: RemoteSettings
@@ -65,7 +65,7 @@ public struct SyncResponse: Decodable {
     }
 }
 
-public struct SyncEvent: Decodable {
+public struct SyncEvent: Decodable, Sendable {
     public let sequence: Int
     public let eventType: String
     public let entityTable: String
@@ -78,7 +78,7 @@ public struct SyncEvent: Decodable {
     }
 }
 
-public enum JSONValue: Decodable, Hashable {
+public enum JSONValue: Decodable, Hashable, Sendable {
     case string(String)
     case int(Int)
     case bool(Bool)

@@ -5,7 +5,7 @@ public enum PairingState: String, Codable {
     case paired
 }
 
-public struct TimelineMessage: Identifiable, Codable, Hashable {
+public struct TimelineMessage: Identifiable, Codable, Hashable, Sendable {
     public let id: String
     public let serverSequence: Int
     public let localDate: String
@@ -18,7 +18,7 @@ public struct TimelineMessage: Identifiable, Codable, Hashable {
     public let clientRequestID: String?
 }
 
-public enum MessageKind: String, Codable {
+public enum MessageKind: String, Codable, Sendable {
     case briefing
     case checkin
     case progress
@@ -32,12 +32,12 @@ public enum MessageKind: String, Codable {
     }
 }
 
-public enum MessageAuthor: String, Codable {
+public enum MessageAuthor: String, Codable, Sendable {
     case app
     case human
 }
 
-public struct ProgressWindow: Codable, Hashable {
+public struct ProgressWindow: Codable, Hashable, Sendable {
     public let id: String
     public let localDate: String
     public let opensAt: Date
@@ -45,7 +45,7 @@ public struct ProgressWindow: Codable, Hashable {
     public let status: String
 }
 
-public struct AppSettings: Codable, Hashable {
+public struct AppSettings: Codable, Hashable, Sendable {
     public var version: Int = 1
     public var morningTimeLocal: String = "09:00"
     public var eveningTimeLocal: String = "21:00"

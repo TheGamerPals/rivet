@@ -17,8 +17,12 @@ public final class NotificationScheduler {
     }
 
     public func refreshPermission() async {
-        let settings = await UNUserNotificationCenter.current().notificationSettings()
-        permissionStatus = settings.authorizationStatus
+        let status = await withCheckedContinuation { continuation in
+            UNUserNotificationCenter.current().getNotificationSettings { settings in
+                continuation.resume(returning: settings.authorizationStatus)
+            }
+        }
+        permissionStatus = status
     }
 
     public func refreshNext48Hours(settings: AppSettings, window: ProgressWindow?) async {
@@ -28,8 +32,11 @@ public final class NotificationScheduler {
         UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ["rivet-briefing-fallback", "rivet-checkin-fallback"])
         schedule(identifier: "rivet-briefing-fallback", title: "Rivet", body: "Your briefing is ready.", at: nextDate(settings.morningTimeLocal))
         schedule(identifier: "rivet-checkin-fallback", title: "Rivet", body: "Time to log what actually moved.", at: nextDate(settings.eveningTimeLocal))
-        let requests = await UNUserNotificationCenter.current().pendingNotificationRequests()
-        pendingCount = requests.count
+        pendingCount = await withCheckedContinuation { continuation in
+            UNUserNotificationCenter.current().getPendingNotificationRequests { requests in
+                continuation.resume(returning: requests.count)
+            }
+        }
     }
 
     private func schedule(identifier: String, title: String, body: String, at date: Date) {
@@ -42,7 +49,7 @@ public final class NotificationScheduler {
     }
 
     private func nextDate(_ hhmm: String) -> Date {
-        let parts = hhmm.split(separator: ":").compactMap(Int.init)
+        let parts = hhmm.split(separator: ":").compactMap { Int(String($0)) }
         var components = Calendar.current.dateComponents([.year, .month, .day], from: Date())
         components.hour = parts.first ?? 9
         components.minute = parts.dropFirst().first ?? 0

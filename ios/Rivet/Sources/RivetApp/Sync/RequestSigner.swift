@@ -1,7 +1,7 @@
 import CryptoKit
 import Foundation
 
-public struct DeviceCredentials: Codable, Hashable {
+public struct DeviceCredentials: Codable, Hashable, Sendable {
     public let deviceID: String
     public let token: String
     public let signingPrivateKeyData: Data

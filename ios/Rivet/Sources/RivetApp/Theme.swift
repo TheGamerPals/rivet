@@ -12,7 +12,7 @@ enum RivetTheme {
     static let progress = Color(red: 0.74, green: 0.63, blue: 0.36)
 }
 
-public enum ThemeMode: String, CaseIterable, Identifiable, Codable {
+public enum ThemeMode: String, CaseIterable, Identifiable, Codable, Sendable {
     case dark
     case light
     case system
