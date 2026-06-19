@@ -30,6 +30,7 @@ DerivedData/
 ios/Rivet/build/
 ios/Rivet/Rivet.xcodeproj/
 artifacts/
+sideloadlydaemon.log
 
 # SwiftPM
 .build/
