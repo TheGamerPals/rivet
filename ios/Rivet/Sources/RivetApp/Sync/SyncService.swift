@@ -15,6 +15,10 @@ public final class SyncService {
         self.timeline = timeline
         self.settings = settings
         self.notifications = notifications
+        credentials = KeychainStore.loadCredentials()
+        if credentials == nil, settings.pairingState == .paired {
+            settings.markUnpaired()
+        }
     }
 
     public func pair(code: String) async {
@@ -25,7 +29,13 @@ public final class SyncService {
                 displayName: settings.deviceDisplayName,
                 publicKey: privateKey.publicKey.rawRepresentation.base64URLEncodedString()
             )
-            credentials = DeviceCredentials(deviceID: response.deviceID, token: response.deviceToken, signingPrivateKeyData: privateKey.rawRepresentation)
+            let pairedCredentials = DeviceCredentials(
+                deviceID: response.deviceID,
+                token: response.deviceToken,
+                signingPrivateKeyData: privateKey.rawRepresentation
+            )
+            try KeychainStore.save(credentials: pairedCredentials)
+            credentials = pairedCredentials
             settings.deviceID = response.deviceID
             settings.settings = response.settings.local
             settings.pairingState = .paired

@@ -32,7 +32,6 @@ struct TodayView: View {
             .accessibilityLabel("Open monthly calendar")
         }
         .background(RivetTheme.background)
-        .refreshable { await services.sync.sync(reason: "manual") }
     }
 }
 

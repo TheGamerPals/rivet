@@ -30,6 +30,9 @@ struct DayStripView: View {
             }
             .padding(.horizontal)
         }
+        .frame(height: 74)
+        .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+        .clipped()
     }
 
     private var offsets: [Int] { Array(-21...3) }
