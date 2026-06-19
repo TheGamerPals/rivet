@@ -29,6 +29,7 @@ DerivedData/
 *.xcodeproj/project.xcworkspace/xcuserdata/
 ios/Rivet/build/
 ios/Rivet/Rivet.xcodeproj/
+artifacts/
 
 # SwiftPM
 .build/
