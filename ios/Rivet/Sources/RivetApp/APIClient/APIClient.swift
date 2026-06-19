@@ -105,7 +105,7 @@ public final class APIClient: NSObject, URLSessionDelegate {
     public init(configuration: APIConfiguration) {
         self.configuration = configuration
         encoder.keyEncodingStrategy = .convertToSnakeCase
-        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        decoder.keyDecodingStrategy = .useDefaultKeys
         decoder.dateDecodingStrategy = .iso8601
         super.init()
     }

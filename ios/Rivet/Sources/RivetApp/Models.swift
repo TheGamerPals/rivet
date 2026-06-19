@@ -16,6 +16,19 @@ public struct TimelineMessage: Identifiable, Codable, Hashable, Sendable {
     public let createdAt: Date
     public let sourceDeviceID: String?
     public let clientRequestID: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case serverSequence = "server_sequence"
+        case localDate = "local_date"
+        case kind
+        case author
+        case body
+        case publishedAt = "published_at"
+        case createdAt = "created_at"
+        case sourceDeviceID = "source_device_id"
+        case clientRequestID = "client_request_id"
+    }
 }
 
 public enum MessageKind: String, Codable, Sendable {
@@ -43,6 +56,14 @@ public struct ProgressWindow: Codable, Hashable, Sendable {
     public let opensAt: Date
     public let locksAt: Date
     public let status: String
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case localDate = "local_date"
+        case opensAt = "opens_at"
+        case locksAt = "locks_at"
+        case status
+    }
 }
 
 public struct AppSettings: Codable, Hashable, Sendable {
