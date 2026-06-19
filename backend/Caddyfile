@@ -1,0 +1,14 @@
+rivetapp.duckdns.org {
+    encode zstd gzip
+    handle /healthz {
+        respond 404
+    }
+    handle {
+        reverse_proxy 127.0.0.1:8721
+    }
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "no-referrer"
+    }
+}

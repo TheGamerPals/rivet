@@ -1,0 +1,393 @@
+RIVET BACKEND SPEC
+==================
+
+1. Host and role
+----------------
+
+Host:
+- The backend runs on the user's VM named autopersonal.
+- The implementation agent must assume SSH access is available under the name "autopersonal" but must not hardcode SSH details into the app.
+
+Backend role:
+- Store all canonical settings, messages, progress entries, AI formulation sessions, and sync events.
+- Publish two app-visible messages per local day:
+  - Briefing at the configured morning time.
+  - Check-in at the configured evening time.
+- Orchestrate Mistral Large 3 calls for briefing generation and summary updates.
+- Expose HTTPS API for app pull/sync and progress submission.
+- Never send remote push notifications.
+
+2. Required stack
+-----------------
+
+Runtime:
+- Python 3.12.
+
+Host OS:
+- Ubuntu on Oracle Cloud Infrastructure.
+- Follow 08_UBUNTU_OCI_DEPLOYMENT_SECURITY.txt for package installation, filesystem layout, systemd, UFW, OCI ingress rules, TLS, and backups.
+
+Web:
+- FastAPI.
+- Uvicorn bound to 127.0.0.1 behind Caddy.
+
+Database:
+- SQLite in WAL mode for single-user reliability.
+- Use SQLAlchemy 2.x with Alembic migrations.
+- Store the database at /var/lib/rivet/rivet.sqlite3 on autopersonal.
+
+Jobs:
+- Use APScheduler in the backend process.
+- Run exactly one scheduler instance. If deployment changes to multiple backend processes later, scheduler ownership must be guarded by a database lock before enabling multiple processes.
+- Run a recurring prune_expired_device_nonces job at least every 15 minutes.
+
+HTTP client:
+- httpx for Mistral API.
+
+Service manager:
+- systemd system service named rivet-backend.service.
+
+TLS:
+- Use Caddy with Let's Encrypt on the public domain assigned to autopersonal.
+- A public domain is required for the no-extra-apps phone setup.
+- Do not use plain HTTP for phone-to-backend traffic.
+- Uvicorn must not listen on a public interface.
+- Caddy must proxy to http://127.0.0.1:8721 only.
+- See 05_SYNC_SECURITY_EDGE_CASES.txt for request signing and replay protection requirements.
+
+3. Database tables
+------------------
+
+All tables must have created_at and updated_at unless explicitly append-only.
+Use ULID or UUIDv7 ids for sortable unique ids.
+
+devices:
+- id
+- display_name
+- public_key Ed25519 public key, required
+- public_key_algorithm string, value "Ed25519"
+- token_hash
+- revoked_at nullable
+- created_at
+- last_seen_at
+
+device_nonces:
+- id
+- device_id
+- nonce
+- seen_at
+- expires_at
+- unique constraint on device_id and nonce
+
+pairing_codes:
+- id
+- code_hash
+- expires_at
+- claimed_at nullable
+- claimed_device_id nullable
+
+settings_versions:
+- id
+- version integer unique
+- morning_time_local string HH:MM
+- evening_time_local string HH:MM
+- timezone_identifier string
+- notifications_enabled boolean
+- theme_mode enum dark/light/system
+- style_example_ego text
+- style_example_motivational text
+- summary_memory text
+- summary_auto_update_enabled boolean
+- source_device_id nullable
+- created_at
+
+timeline_messages:
+- id
+- sequence integer unique autoincrement
+- local_date string YYYY-MM-DD
+- kind enum briefing/checkin/progress
+- author enum app/human
+- body text
+- published_at datetime nullable
+- created_at datetime
+- source_device_id nullable
+- client_request_id nullable unique for progress idempotency
+- formulation_session_id nullable
+- metadata_json text
+
+notification_previews:
+- id
+- timeline_message_id
+- local_date string YYYY-MM-DD
+- kind enum briefing/checkin
+- fire_at datetime
+- body_snapshot text
+- visible_in_timeline boolean default false
+- created_at
+- updated_at
+
+progress_windows:
+- id
+- local_date string YYYY-MM-DD unique
+- opens_at datetime
+- locks_at datetime
+- status enum scheduled/open/locked/finalized
+- created_at
+- updated_at
+
+formulation_sessions:
+- id
+- target_local_date string YYYY-MM-DD
+- source_progress_window_date string YYYY-MM-DD
+- status enum pending/running/waiting_rate_limit/final_ready/published/failed
+- started_at nullable
+- final_ready_at nullable
+- published_at nullable
+- model_id
+- settings_version
+- progress_classification enum nullable
+- advice_included boolean nullable
+- summary_update_status enum none/proposed/applied/rejected nullable
+- error text nullable
+- created_at
+- updated_at
+
+formulation_steps:
+- id
+- session_id
+- step_index integer
+- role enum system/user/assistant/tool
+- step_type enum prompt/model_response/history_query/history_result/validation/retry
+- content_json text
+- created_at
+
+history_index:
+- id
+- timeline_message_id
+- local_date
+- kind
+- searchable_text
+- created_at
+
+sync_events:
+- sequence integer primary key autoincrement
+- event_type enum message_created/settings_changed/window_changed/session_changed/device_changed
+- entity_id
+- entity_table
+- payload_json
+- created_at
+
+job_runs:
+- id
+- job_type
+- status enum started/succeeded/failed/skipped
+- scheduled_for
+- started_at
+- finished_at nullable
+- error nullable
+- metadata_json
+
+4. Pub/sub model
+----------------
+
+This is pull-based pub/sub:
+- Backend is the publisher. It writes canonical events to sync_events.
+- App devices are subscribers. They call /v1/sync with a cursor.
+- The backend never pushes.
+- The app creates local notifications after pulling enough data.
+- Backend must publish hidden notification_previews before timeline publication when the message text is ready early enough to schedule locally.
+
+Publishing rules:
+- A timeline message is visible to apps only after published_at is set and a sync_event is emitted.
+- Progress entries from humans are published immediately after validation and storage.
+- Check-in messages are generated and published at evening_time.
+- Briefing messages are generated earlier when possible but published exactly at morning_time.
+
+5. Scheduler rules
+------------------
+
+Daily jobs:
+- ensure_progress_window(date): creates/updates the progress window.
+- prepare_checkin_preview(date): creates a hidden notification_preview at least 6 hours before evening_time.
+- publish_checkin(date): publishes evening check-in at evening_time.
+- start_debounced_formulation(date): scheduled one hour after each progress entry, if the window is still open.
+- lock_progress_window(date): runs at next briefing_time minus one hour.
+- final_formulation_attempt(date): runs at lock_time if final draft is not ready.
+- publish_briefing(date): runs at briefing_time and publishes final briefing or fallback.
+
+Date mapping:
+- Evening check-in on date D collects progress for D.
+- Morning briefing on date D+1 responds to progress from D.
+- If user changes briefing time after a window opens, backend must preserve the already-open window's lock_time unless change happens before checkin_time. This prevents moving the goalposts during an active entry window.
+
+Debounce rule:
+- Every accepted progress entry cancels any pending debounced formulation for that progress window.
+- New debounced formulation is scheduled for last_progress_created_at + 1 hour.
+- If the window locks before debounce fires, lock job starts final formulation immediately.
+
+Draft invalidation:
+- If a final_ready briefing exists and a new accepted progress entry arrives before lock_time, mark the session superseded and create a new formulation session.
+- If new progress arrives after lock_time, reject it for that window and do not invalidate the final draft.
+
+No-progress rule:
+- At lock_time, if no accepted progress exists, create a no-progress formulation session.
+- The classification must be no_progress.
+
+6. API contract
+---------------
+
+All responses include:
+- server_time
+- request_id
+
+Authentication:
+- Authorization: Bearer <device_token>
+- Pairing endpoint is unauthenticated but requires a valid short-lived code.
+- Every authenticated endpoint must also verify the Ed25519 request signature, timestamp, nonce, and body hash defined in 05_SYNC_SECURITY_EDGE_CASES.txt and 08_UBUNTU_OCI_DEPLOYMENT_SECURITY.txt.
+
+Endpoints:
+
+POST /v1/pair/claim
+Request:
+- pairing_code
+- device_display_name
+- device_public_key Ed25519 public key, required
+Response:
+- device_id
+- device_token
+- initial_cursor
+- settings
+- server_time
+
+GET /v1/sync?cursor=<integer>
+Response:
+- cursor
+- events ordered by sequence
+- settings current version
+- progress_window current/next
+- server_time
+
+POST /v1/progress
+Request:
+- client_request_id
+- local_date
+- body
+Response:
+- message
+- progress_window
+- cursor_after
+- server_time
+
+PUT /v1/settings
+Request:
+- base_version
+- morning_time_local
+- evening_time_local
+- timezone_identifier
+- notifications_enabled
+- theme_mode
+- style_example_ego
+- style_example_motivational
+- summary_memory
+- summary_auto_update_enabled
+Response:
+- settings new version
+- affected_windows
+- cursor_after
+- server_time
+
+GET /v1/day/{YYYY-MM-DD}
+Response:
+- date
+- messages
+- progress_window
+- formulation_status relevant to the next briefing
+- server_time
+
+GET /v1/diagnostics
+- Authenticated and signed.
+Response:
+- backend_version
+- database_path redacted basename only
+- current_settings_version
+- latest_cursor
+- scheduler_status
+- last_mistral_call_at
+- pending_jobs summary
+- server_time
+
+Admin pairing code creation:
+- No production HTTP endpoint.
+- Provide SSH-only CLI command: rivet-admin pairing-code create --ttl 10m.
+- CLI prints the pairing code once and stores only its hash.
+
+GET /healthz
+- Intended for localhost/service checks.
+- Returns 200 with {"status":"ok"}.
+- Caddy must not expose /healthz publicly unless the implementation adds authentication first.
+
+7. Validation rules
+-------------------
+
+Progress body:
+- Trim leading/trailing whitespace.
+- Reject empty body.
+- Maximum length: 8000 characters per entry.
+- Preserve internal line breaks.
+
+Settings examples:
+- Ego example max 4000 characters.
+- Motivational example max 4000 characters.
+- Summary max 350 words.
+- If summary exceeds max, backend rejects with 422 and app asks user to shorten.
+
+Schedule:
+- Morning and evening times are local HH:MM.
+- They must be at least 4 hours apart.
+- The computed progress window must be at least 2 hours long.
+- If validation fails, return 422 with exact reason.
+
+8. Fallback behavior
+--------------------
+
+If Mistral API fails before briefing time:
+- Retry with exponential backoff until publish time.
+- If no final draft is ready at publish time, publish a deterministic fallback:
+  "No generated briefing is ready yet. Yesterday still counts: if you logged nothing, that is the answer. Open Rivet later for the full briefing."
+- Continue generation after publish.
+- When final generated briefing becomes ready, publish it as a replacement/late briefing event with metadata original_message_id. The app must show the generated version as the canonical briefing and preserve the fallback in history metadata.
+
+If check-in generation fails:
+- Publish deterministic varied local template selected by date hash.
+- Do not block progress entry.
+
+9. Backend deployment tasks
+---------------------------
+
+Implementation agent must provide:
+- pyproject.toml.
+- Alembic migration scripts.
+- .env.example with MISTRAL_API_KEY, DATABASE_URL, PUBLIC_BASE_URL, TIMEZONE, LOG_LEVEL.
+- Ubuntu systemd service file for rivet-backend.service.
+- Caddyfile for public-domain HTTPS.
+- Backend README with autopersonal setup commands.
+- Health check command.
+- docs/setup-autopersonal-ubuntu-oci.md following 08_UBUNTU_OCI_DEPLOYMENT_SECURITY.txt exactly.
+
+10. Backend logging
+-------------------
+
+Log:
+- request_id
+- endpoint
+- status code
+- duration
+- job runs
+- Mistral call status without prompt bodies by default
+- sync cursors
+
+Do not log:
+- Full Mistral prompts by default.
+- Device tokens.
+- Mistral API key.
+- Full user progress bodies unless debug mode is explicitly enabled locally.

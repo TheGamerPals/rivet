@@ -1,0 +1,211 @@
+RIVET TESTING, LINTING, AND ACCEPTANCE SPEC
+===========================================
+
+1. Required repository structure
+--------------------------------
+
+The coding agent must create this repository structure:
+
+/ios/Rivet
+  Xcode project or package files
+  Sources
+  Tests
+
+/backend
+  app
+  tests
+  migrations
+  pyproject.toml
+  .env.example
+  README.md
+
+/docs
+  setup-autopersonal.md
+  sideloadly-install.md
+  api.md
+
+/assets
+  rivet-logo.svg
+  generated app icons
+
+The planning package must remain in the repository under /Rivet_Planning_Package and may also be copied into /docs/specs.
+
+2. iOS linting and formatting
+-----------------------------
+
+Required:
+- swift-format or SwiftFormat.
+- SwiftLint if compatible with the project.
+- Xcode build with warnings treated seriously.
+
+Minimum commands:
+- swiftformat . or swift-format format --in-place, depending on chosen tool.
+- swiftlint, if configured.
+- xcodebuild test for the selected scheme and simulator.
+
+Rules:
+- No force unwraps in production code unless justified with a comment.
+- No secrets in source.
+- Networking and persistence must be testable through protocols/mocks.
+
+3. Backend linting and formatting
+---------------------------------
+
+Required Python tooling:
+- ruff format
+- ruff check
+- mypy
+- pytest
+
+Minimum backend commands:
+- python -m ruff format backend
+- python -m ruff check backend
+- python -m pytest backend/tests
+
+Backend code requirements:
+- Type hints for public functions.
+- Pydantic models for API request/response validation.
+- Database migrations committed.
+- No broad bare except blocks.
+- Structured logs.
+- Secrets loaded from environment.
+
+4. Unit tests
+-------------
+
+iOS unit tests must cover:
+- Composer unlock/lock calculations.
+- Calendar future-day disabling.
+- Settings validation before API submission.
+- Sync event idempotency.
+- Progress submit retry with same client_request_id.
+- Local notification scheduling replacement from fallback to actual excerpt.
+- Offline queued progress behavior.
+- Ed25519 request-signing canonical string construction.
+- Keychain storage attributes for auth token and signing private key.
+
+Backend unit tests must cover:
+- Pairing code claim and expiry.
+- Device auth success/failure/revocation.
+- Ed25519 request signature verification.
+- Timestamp skew rejection.
+- Nonce replay rejection.
+- Body hash mismatch rejection.
+- Settings version conflict.
+- Progress validation and idempotency.
+- Progress window open/lock/finalized transitions.
+- Debounced formulation scheduling.
+- No-progress classification trigger.
+- Sync cursor ordering and idempotency.
+- DST schedule behavior.
+- Mistral malformed JSON repair path with mocked API.
+- Advice frequency enforcement.
+- Summary max-length validation.
+
+5. Integration tests
+--------------------
+
+Required backend integration scenarios:
+- New device pairs, syncs initial settings, submits progress, syncs resulting message.
+- Two devices pair; device A submits progress; device B receives it on sync.
+- Replayed signed request is rejected.
+- Signed request with tampered body is rejected.
+- Settings changed on device A; stale settings update from device B returns 409.
+- Briefing formulation session resumes after simulated rate limit.
+- Publish job is retried and does not duplicate messages.
+
+Additional required integration check:
+- End-to-end local test with FastAPI test server and iOS mocked API client.
+
+6. Manual QA
+------------
+
+iOS manual QA checklist:
+- Fresh install shows pairing screen.
+- Pairing succeeds with autopersonal backend.
+- Main screen loads current day.
+- Day strip scrolls.
+- Future days are greyed out and disabled.
+- Monthly calendar opens and scrolls between months.
+- Past date opens correct timeline.
+- Composer hidden/disabled before check-in.
+- Composer unlocks after check-in.
+- Multiple progress entries submit and appear.
+- Composer locks one hour before briefing.
+- Settings time changes reschedule notifications.
+- Notification permission denied path works.
+- Offline cached view works.
+- Manual sync displays last sync status.
+- Dark mode is default.
+- Light mode toggle is legible.
+- Dynamic Type does not break layout.
+
+Backend manual QA checklist:
+- systemd service starts on autopersonal.
+- Localhost health endpoint responds on autopersonal.
+- HTTPS certificate is valid from iPhone.
+- Pairing code CLI works.
+- OCI ingress exposes no public port 8721.
+- UFW rules match the OCI ingress plan.
+- If the backend is unreachable from iPhone, OCI ingress, Ubuntu UFW, Caddy service status, Caddy listener state, and Uvicorn bind address are checked before app code is changed.
+- Replayed request with reused nonce is rejected.
+- Database persists after service restart.
+- Scheduler runs check-in and briefing jobs.
+- Mistral API key is loaded only on backend.
+- Logs do not leak secrets.
+
+7. AI quality acceptance
+------------------------
+
+Create at least 12 fixture progress reports:
+- no progress
+- word salad
+- tiny progress
+- small progress
+- medium progress
+- large progress
+- regression
+- mixed progress
+- internship withdrawn or opportunity lost
+- vague "I thought about it" entry
+- multi-entry split progress
+- strong real progress deserving small kudos
+
+For each fixture, assert:
+- Classification is plausible.
+- Briefing does not invent unsupported progress.
+- Tone is blunt and mostly pessimistic.
+- Protected-class abuse is absent.
+- Self-harm encouragement is absent.
+- Advice frequency rules are followed across sequence.
+- Summary update happens only when warranted.
+
+8. Acceptance criteria
+----------------------
+
+The implementation is acceptable only when:
+- App builds successfully in Xcode.
+- Backend tests pass.
+- iOS tests pass or documented simulator limitations are explained.
+- Lint/format commands pass.
+- App can pair with autopersonal backend.
+- App can sync messages across two installed app instances or two simulator/device identities.
+- Backend publishes check-in and briefing messages according to configured times.
+- App schedules local notifications without APNs.
+- No Mistral key exists in iOS app bundle.
+- Progress composer obeys unlock and lock rules.
+- AI formulation persists multi-call continuity.
+- All canonical history remains on backend and is not deleted.
+- Sideloadly follow-up plan has been executed or left with exact remaining steps and blockers.
+
+9. Documentation required from coding agent
+-------------------------------------------
+
+The coding agent must deliver:
+- Backend setup instructions for autopersonal.
+- iOS build instructions.
+- Sideloadly IPA/install instructions.
+- Environment variable list.
+- API endpoint documentation.
+- Known limitations, especially iOS background refresh limitations without APNs.
+- Troubleshooting section for sync, pairing, TLS, notifications, and Mistral rate limits.

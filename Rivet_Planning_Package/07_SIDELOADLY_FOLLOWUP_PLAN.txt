@@ -1,0 +1,108 @@
+RIVET SIDELOADLY FOLLOW-UP PLAN
+===============================
+
+This file is part of the implementation contract. After building Rivet, the coding agent must continue from this plan and prepare the app for installation on the user's phone using Sideloadly. The coding agent must not treat "app builds in simulator" as finished.
+
+1. Goal
+-------
+
+Prepare a sideloadable iOS app build and guide installation with Sideloadly, while respecting free Apple account limitations.
+
+2. Free Apple account constraints
+---------------------------------
+
+Expected constraints:
+- Apps installed with a free Apple account generally expire after 7 days and must be re-signed/reinstalled.
+- APNs remote push is not available for this architecture.
+- Some entitlements may not be available.
+- Background execution is limited and opportunistic.
+
+The coding agent must verify current Sideloadly and Apple signing behavior during implementation because these constraints can change.
+
+3. Required build output
+------------------------
+
+The coding agent must produce:
+- A Release iOS build archive or app bundle suitable for IPA packaging.
+- An .ipa file that Sideloadly can sign/install, or exact instructions to produce it from Xcode.
+- Generated app icons from rivet-logo.svg.
+- A docs/sideloadly-install.md file.
+
+4. Build steps to document
+--------------------------
+
+The final docs must include:
+1. Install Sideloadly on the user's computer.
+2. Connect iPhone by USB.
+3. Trust the computer on iPhone.
+4. Open Sideloadly.
+5. Select the Rivet .ipa.
+6. Enter Apple ID when prompted by Sideloadly.
+7. Start install.
+8. On iPhone, trust the developer profile if required.
+9. Launch Rivet.
+10. Pair Rivet with autopersonal backend using the backend pairing code.
+11. Grant notification permission.
+12. Confirm backend sync status in Settings.
+
+5. Backend readiness before install
+-----------------------------------
+
+Before sideloading, coding agent must confirm:
+- autopersonal backend service is running.
+- HTTPS endpoint is reachable from the iPhone's network.
+- TLS certificate validates on iPhone.
+- Public-domain Caddy HTTPS is configured and SPKI pinning is tested.
+- Uvicorn port 8721 is not publicly reachable.
+- OCI ingress and Ubuntu UFW expose only the required ports.
+- If the iPhone cannot reach the backend, the coding agent must check both OCI ingress/security-list or NSG rules and Ubuntu-side firewall/listening state before changing app code.
+- Mistral API key is configured on backend.
+- Pairing code can be generated.
+- Scheduler has correct timezone.
+- Database backup path is documented.
+
+6. Device setup validation
+--------------------------
+
+After installing on phone:
+- Pair device.
+- Confirm Settings shows backend connected.
+- Tap manual sync.
+- Confirm current day appears.
+- Create or wait for evening check-in.
+- Verify composer unlocks only after check-in.
+- Submit test progress.
+- Confirm backend stores it.
+- Confirm second app instance/simulator receives it after sync.
+- Confirm local notification permission and scheduled notification count.
+
+7. IPA/package caveats
+----------------------
+
+If building on macOS:
+- Use Xcode archive/export workflow.
+- If Sideloadly expects to sign the IPA itself, provide an unsigned or appropriately packaged IPA as Sideloadly requires.
+
+If building from a non-macOS environment:
+- State that a macOS build machine or CI capable of Xcode builds is required.
+- Do not pretend Windows can compile a native iOS IPA by itself.
+
+8. Renewal plan
+---------------
+
+Because free Apple account sideloaded apps may expire:
+- docs/sideloadly-install.md must include reinstall/renewal steps.
+- The final handoff must identify the latest IPA path so the user can reuse it for renewal.
+- Backend data is canonical, so reinstalling the app must not lose history after re-pairing.
+
+9. Final handoff checklist
+--------------------------
+
+The coding agent must report:
+- IPA path.
+- Backend URL.
+- Backend service status.
+- Pairing code generation command.
+- Whether Sideloadly install was completed or what exact user action remains.
+- Known limitations observed on the physical phone.
+- Confirmation that no APNs/remote push path was used.

@@ -1,0 +1,289 @@
+RIVET UBUNTU OCI DEPLOYMENT AND SECURITY SPEC
+=============================================
+
+1. Scope
+--------
+
+This file is mandatory for the autopersonal backend because the VM runs Ubuntu on Oracle Cloud Infrastructure. It refines the backend deployment and communication-security requirements without changing the product behavior.
+
+2. Ubuntu host assumptions
+--------------------------
+
+Host:
+- VM name/SSH alias: autopersonal.
+- Operating system: Ubuntu LTS on Oracle Cloud Infrastructure.
+- Backend public service name: Rivet backend.
+- Backend process must run as a dedicated Linux user named rivet.
+
+Do not hardcode:
+- OCI instance OCID.
+- SSH username.
+- Public IP address.
+- Domain name.
+- Mistral API key.
+
+3. Required Ubuntu packages
+---------------------------
+
+The backend setup documentation must install or verify:
+- python3.12
+- python3.12-venv
+- python3.12-dev
+- build-essential
+- sqlite3
+- git
+- curl
+- ca-certificates
+- ufw
+- caddy
+
+If Ubuntu's default apt repositories do not provide Python 3.12 on the target image, the implementation documentation must use a supported Ubuntu source and must not install random shell scripts from untrusted URLs.
+
+4. Filesystem layout
+--------------------
+
+Use these exact paths:
+- Backend application: /opt/rivet/backend
+- Virtual environment: /opt/rivet/backend/.venv
+- Environment file: /etc/rivet/backend.env
+- SQLite database: /var/lib/rivet/rivet.sqlite3
+- SQLite WAL and SHM files: /var/lib/rivet/rivet.sqlite3-wal and /var/lib/rivet/rivet.sqlite3-shm
+- Backups: /var/backups/rivet
+- Caddy config: /etc/caddy/Caddyfile
+- systemd service: /etc/systemd/system/rivet-backend.service
+
+Ownership and permissions:
+- /opt/rivet owned by root:rivet, directories 0750.
+- /opt/rivet/backend readable by rivet and writable only by root during deployment.
+- /var/lib/rivet owned by rivet:rivet, directory 0750.
+- /var/lib/rivet/rivet.sqlite3 owned by rivet:rivet, file 0640.
+- /etc/rivet owned by root:rivet, directory 0750.
+- /etc/rivet/backend.env owned by root:rivet, file 0640.
+- /var/backups/rivet owned by root:rivet, directory 0750.
+
+5. Linux user
+-------------
+
+Create a dedicated service user:
+- username: rivet
+- shell: /usr/sbin/nologin
+- home: /var/lib/rivet
+- groups: rivet only, plus any minimal group required for reading /etc/rivet/backend.env
+
+The backend must not run as root.
+The backend must not run as the SSH login user.
+
+6. Environment file
+-------------------
+
+/etc/rivet/backend.env must contain:
+- MISTRAL_API_KEY
+- DATABASE_URL=sqlite:////var/lib/rivet/rivet.sqlite3
+- PUBLIC_BASE_URL
+- TIMEZONE=America/Los_Angeles unless the user changes it
+- LOG_LEVEL=INFO
+- RIVET_BIND_HOST=127.0.0.1
+- RIVET_BIND_PORT=8721
+- RIVET_ALLOWED_ORIGINS empty or omitted unless a browser admin UI is later added
+
+Secrets must not be committed to the repository.
+.env.example must contain variable names only and fake example values.
+
+7. systemd service
+------------------
+
+The implementation must provide a rivet-backend.service equivalent to:
+
+[Unit]
+Description=Rivet backend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=rivet
+Group=rivet
+WorkingDirectory=/opt/rivet/backend
+EnvironmentFile=/etc/rivet/backend.env
+ExecStart=/opt/rivet/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8721 --proxy-headers
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/rivet /var/backups/rivet
+ReadOnlyPaths=/opt/rivet/backend /etc/rivet
+
+[Install]
+WantedBy=multi-user.target
+
+The coding agent may add hardening options only if they do not break SQLite, logging, network access to Mistral, or reading /etc/rivet/backend.env.
+
+8. Caddy public-domain path
+---------------------------
+
+This is the only supported phone-to-backend network path in v1. The user must point a public domain or subdomain to the OCI VM, and the Rivet iOS app connects to that domain over HTTPS without requiring extra network apps on the phone.
+
+Caddy must:
+- Listen on TCP 443.
+- Obtain and renew a publicly trusted certificate.
+- Redirect HTTP to HTTPS only if port 80 is open for certificate issuance.
+- Proxy only to 127.0.0.1:8721.
+- Add HSTS after HTTPS is verified working.
+- Not expose Uvicorn directly.
+
+Minimum Caddyfile shape:
+
+rivet.example.com {
+    encode zstd gzip
+    handle /healthz {
+        respond 404
+    }
+    handle {
+        reverse_proxy 127.0.0.1:8721
+    }
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "no-referrer"
+    }
+}
+
+The real domain must replace rivet.example.com.
+
+9. OCI network security
+------------------------
+
+OCI ingress rules must be minimal:
+- TCP 443 from 0.0.0.0/0 for public-domain Caddy.
+- TCP 80 from 0.0.0.0/0 only when needed for certificate issuance or HTTP-to-HTTPS redirect.
+- TCP 22 only from the user's trusted public IP range, not 0.0.0.0/0.
+- No public ingress to 8721.
+- No public ingress to SQLite or any database port.
+
+Ubuntu UFW must match OCI:
+- default deny incoming
+- default allow outgoing
+- allow 443/tcp for public-domain Caddy
+- allow 80/tcp only if needed by Caddy certificate issuance
+- allow 22/tcp only from trusted source IP where practical
+- deny 8721/tcp from all non-local sources
+
+Port verification duty:
+- The coding agent must verify OCI security-list or NSG ingress rules and Ubuntu UFW rules before declaring the backend unreachable.
+- The coding agent must verify Caddy is listening on public TCP 443.
+- The coding agent must verify Uvicorn is listening only on 127.0.0.1:8721.
+- The coding agent must verify no process exposes TCP 8721 on 0.0.0.0 or the VM public IP.
+- If required ports are not open from the VM side, the coding agent must update Ubuntu UFW and document the exact commands used.
+- If required ports are not open from the OCI side, the coding agent must report the exact OCI ingress rule needed instead of changing application code.
+
+10. API transport and request signing
+-------------------------------------
+
+All iOS-to-backend API calls after pairing must use:
+- HTTPS.
+- Bearer device token.
+- Ed25519 request signature.
+- Timestamp.
+- Nonce.
+- Body hash.
+
+Canonical string to sign:
+METHOD\n
+PATH\n
+CANONICAL_QUERY\n
+DEVICE_ID\n
+TIMESTAMP\n
+NONCE\n
+BODY_SHA256
+
+Rules:
+- METHOD is uppercase.
+- PATH is the URL path only.
+- CANONICAL_QUERY is sorted by key then value, percent-encoded, and empty when there is no query.
+- BODY_SHA256 is SHA-256 of exact request bytes, lowercase hex.
+- TIMESTAMP is Unix seconds.
+- NONCE is base64url without padding.
+
+Backend rejection rules:
+- Reject missing signing headers with 401.
+- Reject unknown device id with 401.
+- Reject revoked device with 403.
+- Reject invalid token with 401.
+- Reject invalid signature with 401.
+- Reject timestamp skew over 300 seconds with 401.
+- Reject nonce reuse within 10 minutes with 401.
+- Reject body hash mismatch with 400.
+
+11. Pairing security
+--------------------
+
+Pairing code:
+- Generated only by SSH CLI on autopersonal.
+- Random at least 128 bits before encoding.
+- Displayed as a short human-enterable code or QR payload.
+- Expires after 10 minutes.
+- Single-use.
+- Stored only as a hash on backend.
+
+Pairing claim:
+- Must use HTTPS.
+- Must include device_display_name.
+- Must include device_public_key.
+- Returns device token only once.
+
+12. iOS transport requirements
+------------------------------
+
+iOS app must:
+- Keep App Transport Security enabled.
+- Disable arbitrary loads.
+- Store device token and signing private key in Keychain.
+- Use kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly for the signing private key.
+- Use kSecAttrSynchronizable=false.
+- Never log request bodies, tokens, signatures, or private keys.
+- Treat TLS validation failure as a hard error.
+
+Certificate pinning:
+- Public-domain mode: implement SPKI SHA-256 pinning with one active pin and one backup pin.
+- Pinning must be configurable at build time because the correct TLS SPKI pins depend on the deployed backend identity.
+- docs/setup-autopersonal-ubuntu-oci.md must include the exact OpenSSL command used to extract the active SPKI SHA-256 pin from the deployed certificate.
+- The backup pin must be generated from a second private key controlled by the user before release builds enable pinning.
+
+13. Backups
+-----------
+
+Offline backup command sequence:
+- sudo systemctl stop rivet-backend
+- sudo -u rivet sqlite3 /var/lib/rivet/rivet.sqlite3 ".backup '/var/backups/rivet/rivet-YYYYMMDD-HHMMSS.sqlite3'"
+- sudo systemctl start rivet-backend
+
+Online backup command:
+- sudo -u rivet sqlite3 /var/lib/rivet/rivet.sqlite3 ".backup '/var/backups/rivet/rivet-YYYYMMDD-HHMMSS.sqlite3'"
+
+Backup verification:
+- Run sqlite3 backup_file "PRAGMA integrity_check;"
+- The result must be ok.
+
+Backup permissions:
+- Backup files 0640.
+- Owner root:rivet or rivet:rivet.
+- Backups must not be served by Caddy.
+
+14. Deployment verification
+---------------------------
+
+The coding agent must verify:
+- systemctl status rivet-backend is active.
+- journalctl -u rivet-backend shows no secret leakage.
+- A signed diagnostics check command or script succeeds against https://PUBLIC_BASE_URL/v1/diagnostics from a trusted client.
+- Uvicorn is not reachable on the public IP at port 8721.
+- OCI security list or NSG has no public 8721 ingress.
+- UFW status matches the intended exposure.
+- Caddy is reachable from the iPhone on TCP 443.
+- If Caddy is not reachable, the coding agent has checked OCI ingress, Ubuntu UFW, Caddy service status, and Caddy listener state.
+- iPhone can reach PUBLIC_BASE_URL over HTTPS.
+- iPhone rejects the backend if TLS validation fails.
+- Request replay with the same nonce is rejected.
+- Request with modified body but old signature is rejected.

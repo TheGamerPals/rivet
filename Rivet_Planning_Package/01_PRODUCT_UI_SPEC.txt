@@ -1,0 +1,253 @@
+RIVET PRODUCT AND UI SPEC
+=========================
+
+1. Product identity
+-------------------
+
+Name:
+- Rivet
+
+Reason:
+- Short, serious, not cute. It implies pressure, fastening, and staying attached to the work.
+
+App icon/logo:
+- Use assets/rivet-logo.svg as the source logo.
+- The app icon must be a black field with the Rivet mark centered. Do not add motivational slogans, mascots, flames, trophies, lightning bolts, or cartoon elements.
+
+Tone:
+- Direct, bleakly motivational, behavior-focused, and unsentimental.
+- The app must feel like a private accountability ledger, not a wellness app and not a social chatbot.
+
+2. Primary user workflow
+------------------------
+
+Default day flow:
+1. Morning briefing appears at the configured morning time, default 9:00 AM.
+2. User reads the morning briefing for the current day.
+3. Evening check-in appears at the configured evening time, default 9:00 PM.
+4. Only after the evening check-in exists for that local date, the progress composer unlocks.
+5. User may submit one or more progress updates until the lock time.
+6. Lock time is one hour before the next morning briefing. With defaults, input locks at 8:00 AM.
+7. Backend formulates the next morning briefing from the progress window, current summary/memory, style examples, and relevant history.
+8. Next morning briefing is published at the configured morning time.
+
+If the user submits no progress:
+- At lock time, the day is treated as "no progress submitted".
+- The next morning briefing must clearly treat this as no demonstrated progress, not as neutral ambiguity.
+
+3. Main screen layout
+---------------------
+
+Screen name:
+- Today
+
+Top area:
+- Horizontal day calendar strip across the top.
+- It shows at least 7 days at a time: 3 previous days, current day, and 3 future days.
+- The current day is visually active.
+- Past days are selectable.
+- Future days are visible but greyed out and not selectable.
+- Swiping horizontally moves through days.
+- Tapping a past day opens that day's timeline.
+- A compact calendar icon opens monthly calendar mode.
+
+Monthly calendar mode:
+- Presented as a sheet or full-screen overlay.
+- User can scroll between months.
+- Future dates are greyed out and disabled.
+- Dates with messages/progress show a small activity marker.
+- Tapping a past or current date closes the calendar and shows that day.
+
+Message timeline:
+- Messages are shown as a chronological daily ledger.
+- The morning briefing and evening check-in must look meaningfully different through layout and tone, not through literal labels like "AM message" or "PM message".
+- Suggested visible labels:
+  - Morning generated message: "Briefing"
+  - Evening prompt: "Check-in"
+  - User entries: "Progress"
+- Do not use the phrases "AM message" or "PM message" in the interface.
+
+Composer:
+- Hidden or disabled before the evening check-in is published.
+- Unlocked only for the current active progress window.
+- Locked one hour before the next morning briefing.
+- When locked, show a compact lock state: "Closed for tomorrow's briefing."
+- Composer supports multiline text.
+- Submit button is disabled for empty or whitespace-only input.
+- User can submit multiple entries during the open window.
+- Submitted entries append to the day's progress thread.
+- There is no AI reply after user progress entries during the rest of that day.
+
+4. Settings screen
+------------------
+
+Settings must include:
+- Notifications toggle.
+- Theme mode: Dark, Light, System.
+- Morning briefing time picker. Default: 9:00 AM.
+- Evening check-in time picker. Default: 9:00 PM.
+- Ego-crushing style example text box.
+- Pessimistic motivational style example text box.
+- Situation summary/memory text box.
+- Backend connection status.
+- Last sync time.
+- Manual sync button.
+- Device identity label, such as "This device: iPhone 15".
+
+Settings text boxes:
+- Ego-crushing example: user-provided example of a harsh, ego-puncturing style.
+- Pessimistic motivational example: user-provided example of blunt motivational style.
+- Situation summary/memory: short evolving summary that includes the user's goal directly or by strong implication.
+
+Summary/memory behavior:
+- The summary is editable by the user.
+- The backend AI may propose an updated summary after morning formulation.
+- If auto-update is enabled, the backend stores the AI-updated summary as a new version.
+- If auto-update is disabled, the app shows the proposed summary update for manual acceptance.
+- The summary must stay concise. Target 120 to 250 words. Hard maximum 350 words.
+- The summary must remove or downgrade stale facts when progress is lost, circumstances change, or prior assumptions become false.
+
+5. Visual design requirements
+-----------------------------
+
+Default aesthetic:
+- Dark, severe, precise, industrial-minimal.
+- It must feel like a private control surface, not a card-heavy productivity dashboard.
+
+Palette:
+- Background: near black, #070807.
+- Primary surface: charcoal, #111311.
+- Secondary surface: #191C19.
+- Primary text: bone, #E8E3D7.
+- Secondary text: cold grey, #9CA39A.
+- Disabled/future days: #4B504A.
+- Accent: signal green, #B6FF4D.
+- Warning/regression accent: iron red, #D14B3F.
+- Progress marker accent: brass, #BDA15B.
+
+Typography:
+- Use native iOS dynamic type for accessibility.
+- Prefer Avenir Next or Apple's rounded/serif alternatives only if available and legible.
+- Calendar numerals may use monospaced digits.
+- Do not use oversized hero typography inside the app.
+
+Layout style:
+- Dense but readable.
+- Avoid nested cards.
+- Use full-width bands or simple panels.
+- Cards may be used only for individual message entries.
+- Cards must use radius 8 or less.
+- No gradient blobs, decorative orbs, mascots, or generic motivational imagery.
+
+Interaction design:
+- Haptics:
+  - Light impact on date selection.
+  - Success notification when progress is submitted.
+  - Warning haptic when user tries to type while locked.
+- Motion:
+  - Subtle date strip snapping.
+  - Sheet transitions must use native SwiftUI presentation behavior.
+  - No excessive animation.
+
+Accessibility:
+- All controls must support Dynamic Type.
+- VoiceOver labels are required for calendar days, message entries, submit button, settings controls, and sync status.
+- Color must not be the only indicator of locked/future/completed state.
+- Hit targets must be at least 44x44 points.
+
+6. Copy and tone rules
+----------------------
+
+Morning briefing:
+- Usually pessimistic and blunt.
+- May insult the user's behavior, excuses, avoidance, or weak follow-through.
+- Must not insult protected classes, immutable traits, disability, race, gender, religion, sexuality, or body characteristics.
+- Must not encourage self-harm, hopelessness, or dangerous behavior.
+- Must not pretend progress happened when there is no evidence.
+- Must include small kudos only when there is real progress.
+- Must sometimes include practical real-world advice, but not every morning.
+- Advice frequency target: 20 percent to 35 percent of morning briefings, enforced through backend prompt metadata and recent-history checks.
+
+Evening check-in:
+- Shorter and simpler than the morning briefing.
+- Should vary wording day to day.
+- May reference the latest known summary or today's morning theme in one sentence.
+- Must ask for progress without sounding like a static template.
+- Should not include deep analysis.
+
+User progress:
+- Treated as claims that must be evaluated for substance.
+- The AI must classify progress as one of:
+  - no_progress
+  - word_salad
+  - tiny
+  - small
+  - medium
+  - large
+  - regression
+  - mixed
+- Empty claims, vague reflection, and inflated language without concrete action must be called out.
+
+7. Required UI states
+---------------------
+
+Main screen must handle:
+- First launch before backend pairing.
+- Backend paired but no sync yet.
+- Current day before morning briefing.
+- Current day after morning briefing before evening check-in.
+- Composer unlocked after evening check-in.
+- Composer locked before next morning.
+- Past day with full history.
+- Past day with no progress.
+- Future day disabled.
+- Offline with cached data.
+- Sync error.
+- Notification permission denied.
+- Background refresh disabled.
+- Backend unavailable.
+- AI draft pending.
+- AI draft failed but retry scheduled.
+
+8. Naming rules for code and UI
+-------------------------------
+
+Internal code may use:
+- morning_briefing
+- evening_checkin
+- progress_entry
+- formulation_session
+
+Visible UI must use:
+- Briefing
+- Check-in
+- Progress
+- Settings
+- Sync
+- Memory
+
+Avoid visible labels:
+- AM message
+- PM message
+- AI chatbot
+- motivational bot
+- roast mode
+- insult mode
+
+9. Minimum screen list
+----------------------
+
+Required screens:
+- Pairing/onboarding screen.
+- Today screen with day strip and timeline.
+- Monthly calendar sheet.
+- Settings screen.
+- Backend connection diagnostics screen.
+- Notification permission explanation screen.
+
+Do not build:
+- Landing page.
+- Marketing page.
+- Account marketplace.
+- Social feed.
+- Achievement badges.

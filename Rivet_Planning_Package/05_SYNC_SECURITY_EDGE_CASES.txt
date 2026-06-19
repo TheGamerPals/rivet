@@ -1,0 +1,248 @@
+RIVET SYNC, SECURITY, AND EDGE CASE SPEC
+========================================
+
+1. Transport encryption
+-----------------------
+
+Requirement:
+- All app-backend communication must use HTTPS.
+- Plain HTTP is forbidden except localhost development.
+- iOS must use App Transport Security with arbitrary loads disabled.
+- Minimum TLS version is TLS 1.2; TLS 1.3 is required whenever the selected Caddy/iOS path negotiates it.
+- The backend must reject requests whose original scheme is not HTTPS, except health checks from localhost.
+
+Production path:
+- Use public domain to autopersonal through Caddy with Let's Encrypt.
+- The no-extra-apps phone setup requires the Rivet iOS app to connect directly to https://PUBLIC_BASE_URL.
+- On OCI, expose only TCP 443 publicly unless SSH from the user's trusted IP is explicitly required.
+- Uvicorn must bind to 127.0.0.1 and must not be reachable directly from the internet.
+
+Certificate handling:
+- Use normal iOS trust store where possible.
+- Do not disable certificate validation.
+- Certificate pinning is required. Pin the TLS certificate public key using SPKI SHA-256 with one active pin and one backup pin stored in app configuration.
+- Never pin a short-lived Let's Encrypt leaf certificate.
+- The implementation must include a documented pin rotation process before enabling pinning.
+
+Request integrity and replay protection:
+- Each device must generate an Ed25519 signing keypair during pairing.
+- The private signing key must be stored in the iOS Keychain with kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly.
+- The public signing key must be registered with the backend during POST /v1/pair/claim.
+- Every authenticated request after pairing must include:
+  - Authorization: Bearer <device_token>
+  - X-Rivet-Device-Id
+  - X-Rivet-Timestamp as Unix seconds
+  - X-Rivet-Nonce as 128 bits of cryptographic randomness encoded base64url
+  - X-Rivet-Body-SHA256 as lowercase hex SHA-256 of the exact request body, or SHA-256 of empty bytes for bodyless requests
+  - X-Rivet-Signature as base64url Ed25519 signature over method, path, canonical query string, timestamp, nonce, body hash, and device id joined by newline
+- Backend must verify the bearer token hash, device id, timestamp, nonce uniqueness, body hash, and Ed25519 signature before processing the request.
+- Backend must reject timestamps more than 300 seconds away from server time.
+- Backend must store accepted nonces for at least 10 minutes per device and reject nonce reuse.
+- Failed signature checks must return 401 without revealing which check failed.
+- Pairing code claim is the only non-signed app endpoint.
+
+2. Authentication
+-----------------
+
+Device auth:
+- Each device gets its own bearer token and Ed25519 public key registration during pairing.
+- Backend stores token hash only.
+- Token is sent over HTTPS.
+- Device can be revoked.
+- Revoking a device invalidates both its token hash and registered signing key.
+
+Replay/idempotency:
+- All progress submissions include client_request_id.
+- Backend deduplicates repeated client_request_id per device.
+- Settings updates include base_version.
+
+Admin operations:
+- Pairing code creation must be a backend CLI command run over SSH on autopersonal.
+- Do not expose HTTP admin endpoints in production.
+
+3. Data at rest
+---------------
+
+Backend:
+- Canonical history is stored on autopersonal.
+- Message records are append-only and never deleted.
+- Settings versions are preserved.
+- The backend must include documented SQLite backup and restore commands.
+- At-rest encryption is a v2 hardening item unless autopersonal already uses encrypted disk. The implementation README must explicitly state the at-rest encryption status.
+- Database file permissions must be 0640, owned by rivet:rivet.
+- /etc/rivet/backend.env permissions must be 0640, owned by root:rivet.
+- Backend service must run as the dedicated rivet Linux user with no interactive shell.
+
+iOS:
+- Tokens in Keychain.
+- Local cache in app container.
+- SQLite file protection must be complete-until-first-user-authentication so background refresh can read the cache after first unlock.
+- Device signing private key must be non-synchronizable Keychain material and must not migrate through iCloud Keychain.
+
+4. Multi-device sync conflicts
+------------------------------
+
+Messages:
+- Timeline messages are append-only.
+- No editing progress entries in v1. This avoids conflicts and preserves history.
+
+Settings:
+- Versioned.
+- App sends base_version.
+- Backend returns 409 if stale.
+- App shows a conflict resolver comparing:
+  - local draft
+  - current backend value
+- User chooses which value to keep per field.
+
+Summary auto-updates:
+- AI summary update creates a new settings version with source "backend_ai".
+- If user edits summary around the same time, backend must not silently overwrite. It returns conflict requiring user choice unless auto-update is enabled and base version matches.
+
+5. Time zones and DST
+---------------------
+
+Source of truth:
+- Settings include timezone_identifier, such as America/Los_Angeles.
+- Backend computes windows using that timezone.
+- App displays times in current device timezone but warns if it differs from configured timezone.
+
+DST:
+- If scheduled time is skipped by DST spring-forward, run at the next valid local time.
+- If scheduled time repeats by DST fall-back, run only once at the earlier UTC occurrence; store UTC instants to prevent duplicates.
+
+Travel:
+- If device timezone changes, app asks whether to update Rivet timezone.
+- Do not silently change backend timezone.
+
+Clock skew:
+- Backend server_time is authoritative.
+- App may use local time offline but must reconcile on sync.
+
+6. Notification edge cases
+--------------------------
+
+Permission denied:
+- App shows in-app timeline only.
+- Settings explains notifications are off and links to iOS Settings.
+
+Background App Refresh disabled:
+- App still schedules generic local notifications from known schedule.
+- Actual generated text in notification banner may not appear until app opens and syncs.
+
+App force-quit:
+- iOS may not run background tasks.
+- Already scheduled local notifications still fire.
+- Sync resumes when app opens.
+
+Backend offline:
+- App shows cached content.
+- Local generic notifications still fire.
+- Progress may queue locally only if composer is believed open.
+
+Backend publishes late:
+- App fetches late message on next sync.
+- Timeline displays actual published_at and any late status.
+
+Notification duplication:
+- ScheduledNotificationRecord prevents duplicate scheduling.
+- When replacing fallback with actual excerpt before fire time, cancel old pending notification by identifier and schedule replacement.
+
+7. AI and rate-limit edge cases
+-------------------------------
+
+Rate limit one hour after progress:
+- Session status becomes waiting_rate_limit.
+- Retry with exponential backoff and jitter.
+- Preserve session state.
+
+Rate limit near lock time:
+- Continue retrying until publish time.
+- If no final draft by publish time, publish deterministic fallback and continue generation.
+
+Model malformed JSON:
+- Store raw response.
+- Run repair prompt in same session.
+- If repair fails, retry up to configured maximum.
+
+Model too soft:
+- Critique pass must flag "too_soft" and request a sharper rewrite.
+- Do not exceed safety boundaries.
+
+Model too abusive:
+- Deterministic safety validator or model critique flags it.
+- Repair toward behavior-focused harshness.
+
+Summary bloat:
+- If summary exceeds 350 words, reject and repair.
+- If repeated updates only append, instruct model to consolidate and remove stale details.
+
+8. Progress-entry edge cases
+----------------------------
+
+Multiple split messages:
+- Treat all accepted entries in the open progress window as one combined progress report for classification.
+- Preserve each entry separately in history.
+
+Late message:
+- If server receives after lock_time, reject for that window.
+- If the user typed offline, the app displays the local draft as "not included" after backend rejection. Backend must not store late entries in v1.
+
+Empty/vague progress:
+- Empty rejected.
+- Vague accepted but likely classified as word_salad.
+
+Huge progress:
+- Max 8000 characters per entry.
+- If user needs more, allow multiple entries until lock.
+
+Duplicate submit:
+- client_request_id dedupe.
+
+9. Publication edge cases
+-------------------------
+
+Check-in already exists:
+- publish_checkin is idempotent and must not create duplicates.
+
+Briefing already final_ready:
+- publish_briefing publishes exactly once.
+- If publish job retries, it must detect existing published briefing.
+
+Settings changed mid-day:
+- If before evening check-in, use new schedule.
+- If during open progress window, preserve current lock_time unless user explicitly confirms applying new time to active window.
+- If after lock_time, apply to future windows only.
+
+No devices synced:
+- Backend still publishes messages.
+- App catches up on next sync.
+
+10. Backup and recovery
+-----------------------
+
+Backend backup:
+- Provide Ubuntu commands to stop service, run sqlite3 .backup to /var/backups/rivet, and restart service.
+- Provide online SQLite backup command using sqlite3 .backup while the service remains running.
+- Backup files must have permissions 0600 or 0640 and must not be stored under the web root.
+
+Restore:
+- Restored backend preserves sequence numbers.
+- Devices may need full resync if cursor is ahead of restored sequence.
+- If app cursor is invalid, backend returns "cursor_reset_required" and app fetches full sync from 0.
+
+11. Privacy expectations
+------------------------
+
+Mistral receives:
+- Summary/memory.
+- Style examples.
+- Relevant progress and message history.
+- Retrieved history excerpts when requested.
+
+Mistral must not receive:
+- Device tokens.
+- Backend secrets.
+- Full database dump.
+
+Implementation README must plainly state that generated accountability text is sent to Mistral through the backend.

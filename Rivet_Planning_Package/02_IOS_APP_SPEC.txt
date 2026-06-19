@@ -1,0 +1,307 @@
+RIVET IOS APP SPEC
+==================
+
+1. Platform and architecture
+----------------------------
+
+Required app type:
+- Native iOS app built with SwiftUI.
+- Minimum deployment target: iOS 17.0. If the target phone cannot run iOS 17, implementation must pause for a documented compatibility change.
+
+Primary frameworks:
+- SwiftUI for UI.
+- Observation or ObservableObject for state.
+- URLSession for HTTPS API calls.
+- UserNotifications for local notifications.
+- BackgroundTasks for opportunistic background sync.
+- GRDB over SQLite for local cache.
+
+Architecture:
+- Use MVVM with service protocols and observable view models.
+- Keep networking, persistence, notifications, AI-free UI state, and settings in separate services.
+- UI must not call URLSession directly.
+- Use dependency injection for services so tests can replace network, database, clock, notification center, and background task scheduler.
+
+Required modules:
+- AppRoot
+- OnboardingPairing
+- Calendar
+- Timeline
+- Composer
+- Settings
+- Sync
+- Notifications
+- Persistence
+- APIClient
+- Diagnostics
+
+2. Local data model
+-------------------
+
+Local cache mirrors backend records and must be append-friendly.
+
+Entities:
+- Device
+  - id
+  - display_name
+  - backend_device_id
+  - pairing_state
+  - created_at
+  - last_sync_at
+
+- AppSettings
+  - id
+  - morning_time_local
+  - evening_time_local
+  - timezone_identifier
+  - notifications_enabled
+  - theme_mode
+  - style_example_ego
+  - style_example_motivational
+  - summary_memory
+  - summary_auto_update_enabled
+  - updated_at
+  - version
+
+- TimelineMessage
+  - id
+  - server_sequence
+  - local_date
+  - kind: briefing, checkin, progress
+  - author: app, human
+  - body
+  - published_at
+  - created_at
+  - updated_at
+  - source_device_id nullable
+  - formulation_session_id nullable
+
+- ProgressWindow
+  - id
+  - local_date
+  - opens_at
+  - locks_at
+  - status: not_open, open, locked
+
+- SyncState
+  - id
+  - last_cursor
+  - last_success_at
+  - last_error
+
+- ScheduledNotificationRecord
+  - id
+  - timeline_message_id nullable
+  - local_date
+  - kind: briefing, checkin, fallback
+  - fire_at
+  - body_snapshot
+  - scheduled_at
+  - delivered_known boolean
+
+Local deletion:
+- The app must not purge local cache in v1 except through uninstalling the app.
+- The backend must never delete history.
+
+3. Pairing and authentication
+-----------------------------
+
+Pairing flow:
+1. User starts backend setup on autopersonal and receives a short-lived pairing code or QR code.
+2. App shows pairing screen.
+3. App generates an Ed25519 signing keypair and keeps the private key in Keychain.
+4. User enters pairing code or scans QR.
+5. App calls POST /v1/pair/claim over HTTPS with device_display_name and device_public_key.
+6. Backend returns device_id, device token, initial sync cursor, server public metadata, and current settings.
+7. App stores device_id, device token, and signing key reference in Keychain/local secure configuration.
+
+Device identity:
+- Each installed app instance is a separate device.
+- Backend syncs messages and settings across devices.
+- Device tokens and signing keys must be revocable from backend CLI.
+
+Keychain:
+- Store auth token and Ed25519 signing private key in Keychain.
+- Signing private key must use kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly.
+- Signing private key must use kSecAttrSynchronizable=false.
+- Never store secrets in UserDefaults.
+
+4. Notification architecture
+----------------------------
+
+Hard rule:
+- Do not use APNs, remote push notifications, Firebase Cloud Messaging, or any backend-originated push service.
+
+Local notification strategy:
+- The app schedules local notifications using UNUserNotificationCenter.
+- The backend publishes records; the app pulls/syncs them.
+- If a message is already synced before its fire time, schedule a local notification with a short excerpt.
+- If the exact generated message is not synced before fire time, schedule a generic local notification using the known schedule:
+  - Briefing fallback: "Your briefing is ready."
+  - Check-in fallback: "Time to log what actually moved."
+- Opening the notification takes user to the correct day and fetches the canonical message.
+
+Hidden notification previews:
+- The backend must expose a notification_preview object through /v1/sync before the matching timeline message is visible when preview content exists.
+- A notification_preview contains message_id, kind, fire_at, body_snapshot, and local_date.
+- The app must schedule a local notification from notification_preview when notifications are enabled and permission is granted.
+- The timeline must not show the message until published_at is reached and the published message event is synced.
+- This allows check-in text to be scheduled before evening without visually revealing it early.
+
+Background refresh:
+- Register BGAppRefreshTask.
+- Request background refresh after app launch, after successful sync, after settings time changes, and after submitting progress.
+- Background task must:
+  1. Start sync.
+  2. Fetch newly published messages.
+  3. Refresh scheduled notifications for the next 48 hours.
+  4. Exit quickly.
+- Do not assume BGAppRefreshTask will run on time. It is best effort only.
+
+Scheduled notification horizon:
+- Always maintain local notifications for the next 48 hours.
+- For check-ins, backend must create a hidden notification_preview at least 6 hours before evening_time. If unavailable, use fallback notification.
+- For briefings, the final message may become ready only one hour before the briefing. If synced in time, use actual excerpt; otherwise fallback.
+
+Notification permission:
+- Request permission during onboarding after explaining why notifications matter.
+- If denied, app still works through manual opening and sync.
+- Settings must show notification permission status and a button to open iOS Settings.
+
+Time changes:
+- If user changes morning/evening times, app must:
+  1. Save settings locally.
+  2. Sync settings to backend.
+  3. Cancel obsolete pending local notifications.
+  4. Schedule new pending local notifications.
+  5. Trigger backend schedule recalculation.
+
+5. Composer lock rules
+----------------------
+
+Definitions:
+- briefing_time: configured local morning time.
+- checkin_time: configured local evening time.
+- lock_time: next briefing_time minus 1 hour.
+- progress_window_date: the local date associated with the evening check-in.
+
+Composer is unlocked only when:
+- Selected date is current progress_window_date.
+- Evening check-in message exists locally or backend confirms it is published.
+- Current server time is >= checkin_time.
+- Current server time is < lock_time.
+
+Composer is locked when:
+- Selected date is in the past.
+- Selected date is in the future.
+- Evening check-in has not been published yet.
+- Current server time is >= lock_time.
+- Backend explicitly returns progress_window.status = locked.
+
+Server time:
+- The app must use backend server time returned in sync responses for lock decisions.
+- If offline, use local time but mark state as "estimated". On next sync, backend is authoritative.
+
+6. Sync behavior
+----------------
+
+Sync triggers:
+- App launch.
+- App foreground.
+- Pull-to-refresh or manual sync.
+- Successful progress submission.
+- Settings change.
+- Background refresh task.
+- Notification tap.
+
+Cursor-based sync:
+- App sends last_cursor.
+- Backend returns ordered events after cursor.
+- App applies events idempotently.
+- App updates cursor only after successful local transaction.
+- Every sync request after pairing must include the bearer token, device id, timestamp, nonce, body hash, and Ed25519 signature required by 05_SYNC_SECURITY_EDGE_CASES.txt.
+
+Progress submission:
+- App creates a client_request_id UUID/ULID.
+- POST /v1/progress with client_request_id, local_date, body.
+- Backend returns accepted record.
+- If network fails after submit, retry with same client_request_id.
+- Backend must deduplicate by client_request_id.
+
+Multi-device:
+- If progress is submitted from one device, other devices receive it on next sync.
+- Composer lock/unlock status is backend-authoritative.
+- Settings are versioned. Last-write-wins is forbidden. Each settings update includes base_version and backend rejects stale updates with 409 conflict.
+
+7. Offline behavior
+-------------------
+
+Offline read:
+- Show cached timeline and settings.
+- Show stale sync indicator.
+
+Offline progress entry:
+- If composer is known open and lock time has not passed locally, allow queuing progress locally.
+- Queued progress must be clearly marked "Pending sync".
+- If queued progress reaches backend after lock_time, backend rejects it. App marks it "Too late for briefing" and does not include it in the next formulation.
+- To avoid confusion, if app is offline within 30 minutes of lock_time, show warning that submission may miss the briefing.
+
+Offline settings changes:
+- Allow local draft changes.
+- Sync when online.
+- If conflicts occur, show conflict resolution screen for the three text boxes and schedule times.
+
+8. Diagnostics screen
+---------------------
+
+Diagnostics must show:
+- Backend base URL.
+- Pairing status.
+- Last successful sync time.
+- Current backend server time from last sync.
+- Last sync error.
+- Notification permission.
+- Background App Refresh availability if detectable.
+- Pending local notification count.
+- Current progress window state.
+- Current sync cursor.
+
+9. Error handling
+-----------------
+
+API errors:
+- 401: clear pairing state only after confirmation; show re-pair prompt.
+- 403: show device revoked.
+- 409: settings conflict; fetch latest and resolve.
+- 422: validation error; show concise field-specific message.
+- 429: backend busy/rate limited; retry with backoff.
+- 500: show backend unavailable and keep cached UI.
+
+User-facing error style:
+- Short, direct, non-cute.
+- Example: "Sync failed. Cached history is shown."
+
+10. Build configuration
+-----------------------
+
+Required configs:
+- Debug: local development backend URL.
+- Release: user-provided autopersonal backend URL.
+
+Secrets:
+- No Mistral API key in iOS app.
+- No backend admin secret in iOS app.
+- Only per-device auth token and signing private key in Keychain.
+
+11. App icon generation
+-----------------------
+
+Implementation agent must:
+- Convert assets/rivet-logo.svg into the required iOS app icon sizes.
+- Preserve the black background and centered mark.
+- Verify the icon looks legible at 40x40, 60x60, and 1024x1024.
+
+12. Do not implement yet
+------------------------
+
+This file is a specification. The current task is planning only. The next coding agent must implement according to this spec and then follow 07_SIDELOADLY_FOLLOWUP_PLAN.txt.

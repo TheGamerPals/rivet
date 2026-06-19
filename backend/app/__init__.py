@@ -1,0 +1,1 @@
+"""Rivet backend application package."""

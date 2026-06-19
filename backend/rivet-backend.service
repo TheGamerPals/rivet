@@ -1,0 +1,23 @@
+[Unit]
+Description=Rivet backend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=rivet
+Group=rivet
+WorkingDirectory=/opt/rivet/backend
+EnvironmentFile=/etc/rivet/backend.env
+ExecStart=/opt/rivet/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8721 --proxy-headers
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/rivet /var/backups/rivet
+ReadOnlyPaths=/opt/rivet/backend /etc/rivet
+
+[Install]
+WantedBy=multi-user.target
